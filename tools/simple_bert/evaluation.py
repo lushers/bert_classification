@@ -7,7 +7,7 @@
 ########################################################################
 """
 File: evaluation.py
-Author: lushers
+Author: lushers 
 Date: 2019/07/05 16:15:48
 """
 import time
@@ -49,9 +49,18 @@ class Evaluation(object):
                 if lists[0] == u'影视':
                     lists[0] = u'娱乐'
                 self.y_true.append(self.label_map[lists[0]])
-                lists[1] = lists[1].replace(u'\n', u'').lstrip(u'。').replace(u'。。', u'')
-                lists[2] = lists[2].replace(u'\n', u'').lstrip(u'。').replace(u'。。', u'')
+                lists[1] = lists[1].replace(u'\n', u'').lstrip(u'。')
+                lists[2] = lists[2].replace(u'\n', u'').lstrip(u'。')
+                if len(lists[2]) < 256:
+                    lists[2] = self._append_doc(lists[2], 256)
                 self.x.append(lists[1] + '@@@' + lists[2])
+
+    def _append_doc(self, lists, length):
+        new_list = []
+        lens = len(lists)
+        for i in range(length):
+            new_list.append(lists[i % lens])
+        return u"".join(new_list)
 
     def read_json_file(self, file_name):
         try:
@@ -83,7 +92,7 @@ class Evaluation(object):
 if __name__ == '__main__':
     eva = Evaluation('labels.txt')
     eva.get_label()
-    eva.read_test_file('data0802.txt')
+    eva.read_test_file('0818_26.text.now')
     #eva.read_json_file('/data8/nlp/trainset/weibo_hot/weibo_content_model_v5/validationSet/long_text_test_all.json')
     #with open('textAB_top1_200_res_.txt') as fd:
     #    for line in fd:
@@ -113,6 +122,8 @@ if __name__ == '__main__':
             else:
                 y_predict[i] = y_predict[i][0]
         else:
+            #if len(u) < 100 and y_predict[i][0] == 26:
+            #    y_predict[i][0] = y_predict[i][1]
             y_predict[i] = y_predict[i][0]
     acc = accuracy_score(y_true, y_predict)
     macro_p = metrics.precision_score(y_true, y_predict, average='macro')

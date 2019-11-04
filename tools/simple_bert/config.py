@@ -16,16 +16,17 @@ class Config(object):
         # for model
         self.json_config = "chinese_L-12_H-768_A-12/bert_config.json"
         self.vocab_file = "chinese_L-12_H-768_A-12/vocab.txt"
+        #self.init_checkpoint = 'model_bak/model.ckpt-300000'
         self.init_checkpoint = "chinese_L-12_H-768_A-12/bert_model.ckpt"
         self.batch_size = 16
-        self.num_labels = 37 # classes
+        self.num_labels = 37 # classes 37
         self.is_training = True
         self.max_seq_length = 512
         self.learning_rate = 5e-5
-        self.train_examples = 4800000
-        self.epochs = 2
+        self.train_examples = 4743640
+        self.epochs = 1
         # for data
-        self.output_dir = "./data/sina"
-        self.data_dir = "./data/sina"
+        self.output_dir = ""
+        self.data_dir = ""
         self.task_name = "mine_ab"
 

@@ -13,7 +13,7 @@ import json
 import codecs
 from eva_config import Config
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2'
 gpu_options = tf.GPUOptions(allow_growth=True)
 
 class BertSimple():
@@ -32,7 +32,6 @@ class BertSimple():
         self.y_prb = self.graph.get_tensor_by_name('prefix/pooling/probabilities:0')
 
         self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options), graph=self.graph)
-        #self.sess = tf.Session(graph=self.graph)
 
     def _get_label(self):
         """
@@ -80,6 +79,9 @@ class BertSimple():
             # Account for [CLS] and [SEP] with "- 2"
             if len(tokens_a) > max_seq_length - 2:
                 tokens_a = tokens_a[0:(max_seq_length - 2)]
+        print tokens_a
+        print tokens_b
+
         tokens = []
         segment_ids = []
         tokens.append("[CLS]")
@@ -119,17 +121,18 @@ class BertSimple():
             self.input_mask:mask,
             self.input_type_ids:type_ids
             })
+        #print yout
         probs = [(unit,i) for i,unit in enumerate(yout[1][0])]
         probs = sorted(probs, key=lambda s:s[0], reverse=True)
         #return self.label_map[yout[0][0]]
-        return [self.label_map[probs[0][1]],
-                self.label_map[probs[1][1]],
-                self.label_map[probs[2][1]]
-               ]
-        #return [(self.label_map[probs[0][1]], float(probs[0][0])),
-        #        (self.label_map[probs[1][1]], float(probs[1][0])),
-        #        (self.label_map[probs[2][1]], float(probs[2][0]))
+        #return [self.label_map[probs[0][1]],
+        #        self.label_map[probs[1][1]],
+        #        self.label_map[probs[2][1]]
         #       ]
+        return [(self.label_map[probs[0][1]], float(probs[0][0])),
+                (self.label_map[probs[1][1]], float(probs[1][0])),
+                (self.label_map[probs[2][1]], float(probs[2][0]))
+               ]
         #res = {
         #    self.label_map[probs[0][1]]: float(probs[0][0]),
         #    self.label_map[probs[1][1]]: float(probs[1][0]),
@@ -150,12 +153,12 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
 
 
 if __name__ == '__main__':
-    s = '哈登狂砍36分，火箭还是输球 今天上午火箭季后赛对阵勇士'
     model = BertSimple()
-    while True:
-        s = input('输入title + content\n')
-        if s == 'q':
-            break
-        lists = s.split('@@@')
-        y = model.predict(lists[0], lists[1])
-        print json.dumps(y)
+    with open('./0901_0913.uniq') as fd:
+        for line in fd:
+            lists = line.strip().split('\t|@@@|\t')
+            #label = lists[0]
+            title = lists[2]
+            content = lists[3]
+            y = model.predict(title, content)
+            print json.dumps(y, ensure_ascii=False).encode('utf-8') + '\t|@@@|\t' + line.strip()

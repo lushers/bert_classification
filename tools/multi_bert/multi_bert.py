@@ -2,38 +2,40 @@
 # -*- coding: utf-8 -*-
 ########################################################################
 #
-# Copyright (c) 2019 lushers, Inc. All Rights Reserved
+# Copyright (c) 2019 lushers Inc. All Rights Reserved
 #
 ########################################################################
 """
 File: SimpleBert.py
-Author: lushers
+Author: lushers 
 Date: 2019/06/20 22:24:21
 """
 import sys
 import os
+
+_cur_dir = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(_cur_dir + '/bert_multi_gpu')
 import tensorflow as tf
 import numpy as np
-from bert import modeling, tokenization, optimization
+from bert_multi_gpu import modeling, tokenization, optimization, custom_optimization
 from bert_utils import *
 from config import Config
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,3'
 
 class SimpleBert(object):
     """
         BertModel for classification finetuing
     """
     def __init__(self):
+        # basic config
         self.config = Config()
-        self.batch_size = self.config.batch_size
         self.max_seq_length = self.config.max_seq_length
         self.num_labels = self.config.num_labels
-        self.learning_rate = self.config.learning_rate
+        self.fp16 = self.config.fp16
         self.train_examples = self.config.train_examples
-        self.epochs = self.config.epochs
-
+        # data/model config
         self.init_checkpoint = self.config.init_checkpoint
         self.vocab_file = self.config.vocab_file
         self.json_config = self.config.json_config
@@ -41,22 +43,59 @@ class SimpleBert(object):
         self.data_dir = self.config.data_dir
         self.task_name = self.config.task_name
         self.bert_config = modeling.BertConfig.from_json_file(self.json_config)
-
+        # train config
+        self.use_gpu = self.config.use_gpu
+        self.num_gpu_cores = self.config.num_gpu_cores
+        self.learning_rate = self.config.learning_rate
+        self.batch_size = self.config.batch_size
+        self.epochs = self.config.epochs
         self.warmup_proportion = 0.1
-        self.num_train_steps = int(self.train_examples/self.batch_size*self.epochs)
+        self.num_train_steps = int(self.train_examples / (self.batch_size*self.num_gpu_cores) * self.epochs)
         self.num_warmup_steps = int(self.num_train_steps * self.warmup_proportion)
-        self.run_config = tf.estimator.RunConfig(
-                #model_dir='model_output_ab',
-                model_dir='model_sina_ab_512',
-                save_summary_steps=50,
+        self.run_config = self.init_run_config(self.use_gpu, self.num_gpu_cores)
+
+    def init_run_config(self, use_gpu, num_gpu_cores):
+        """init run_config for multi_gpu
+        """
+        log_every_n_steps = 50
+        if use_gpu and num_gpu_cores >= 2:
+            tf.logging.info("use multi gpu config")
+            dist_strategy = tf.contrib.distribute.MirroredStrategy(
+                num_gpus=num_gpu_cores,
+                #cross_device_ops=AllReduceCrossDeviceOps('nccl', num_packs=FLAGS.num_gpu_cores),
+                #cross_tower_ops=tf.contrib.distribute.AllReduceCrossTowerOps('nccl', num_packs=FLAGS.num_gpu_cores)
+                cross_tower_ops=tf.contrib.distribute.AllReduceCrossTowerOps('hierarchical_copy', num_packs=num_gpu_cores),
+            )
+            run_config = tf.estimator.RunConfig(
+                train_distribute=dist_strategy,
+                eval_distribute=dist_strategy,
+                log_step_count_steps=log_every_n_steps,
+                model_dir='model_512_roberta',
+                save_checkpoints_steps=100,
                 keep_checkpoint_max=5,
-                save_checkpoints_steps=100)
+                save_summary_steps=100
+            )
+        else:
+            tf.logging.info("use normal config (cpu/one-gpu)")
+            run_config = tf.estimator.RunConfig(
+                log_step_count_steps=log_every_n_steps,
+                model_dir='model_512_roberta',
+                save_checkpoints_steps=100,
+                keep_checkpoint_max=5,
+                save_summary_steps=100
+            )
+        return run_config
 
     def create_model(self, is_training, input_ids, input_mask, segment_ids,
-                 labels, num_labels, use_one_hot_embeddings):
+                 labels, num_labels, use_one_hot_embeddings, fp16):
+        """creat bert model
+            fine-tuning:
+                (1) 经过测试,对于分类任务,增加全连接层的大小不能提高分类的精确率
+                (2) 减少transfomer的层数, 对于参数的减少较为明显,
+                对于效果（37）分类在训练、验证集上变化不大(98%-96% 2-epoch),
+                但是测试集上的badcase明显增多
         """
-            finetuing bert
-        """
+        comp_type = tf.float16 if fp16 else tf.float32
         # 创建bert模型
         model = modeling.BertModel(
             config=self.bert_config,
@@ -64,19 +103,11 @@ class SimpleBert(object):
             input_ids=input_ids,
             input_mask=input_mask,
             token_type_ids=segment_ids,
-            use_one_hot_embeddings=False  # without TPU
+            use_one_hot_embeddings=False,  # without TPU
+            comp_type=comp_type
         )
-        # simple use [cls]
-        #output_layer = model.get_all_encoder_layers()[3]
-        #first_token_tensor = tf.squeeze(output_layer[:, 0:1, :], axis=1)
         output_layer = model.get_pooled_output()
         hidden_size = output_layer.shape[-1].value
-        # add dense (try ? )
-        #dense_layer = tf.layers.dense(first_token_tensor, 1024, activation='relu')
-        #dense_layer = tf.identity(dense_layer, name='dense_layer')
-
-        #hidden_size = dense_layer.shape[-1].value
-        #output_layer = dense_layer
 
         # add softmax layer
         output_weights = tf.get_variable(
@@ -104,8 +135,7 @@ class SimpleBert(object):
         return (loss, per_example_loss, logits, probabilities, predict)
 
     def ml_model_fn(self, features, labels, mode, params):
-        """
-            model_fn for Estimator
+        """model_fn for Estimator
         """
         tf.logging.info("*** Features ***")
         for name in sorted(features.keys()):
@@ -128,7 +158,9 @@ class SimpleBert(object):
             segment_ids,
             label_ids,
             self.num_labels,
-            False)
+            False,
+            self.fp16
+        )
 
         tvars = tf.trainable_variables()
         (assignment_map, initialized_variable_names) = modeling.get_assignment_map_from_checkpoint(tvars, self.init_checkpoint)
@@ -145,12 +177,24 @@ class SimpleBert(object):
             })
         }
         if mode == tf.estimator.ModeKeys.TRAIN:
-            train_op = optimization.create_optimizer(
-                loss,
-                params['learning_rate'],
-                params['num_train_steps'],
-                params['num_warmup_steps'],
-                False)
+            # 单机多卡
+            if self.use_gpu and int(self.num_gpu_cores) >= 2:
+                train_op = custom_optimization.create_optimizer(
+                    loss,
+                    params['learning_rate'],
+                    params['num_train_steps'],
+                    params['num_warmup_steps'],
+                    params['fp16']
+                )
+            else:
+                train_op = optimization.create_optimizer(
+                    loss,
+                    params['learning_rate'],
+                    params['num_train_steps'],
+                    params['num_warmup_steps'],
+                    False,
+                    params['fp16']
+                )
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 loss=loss,
@@ -217,7 +261,7 @@ class SimpleBert(object):
                 model_fn=model_fn,
                 config=self.run_config,
                 params={'batch_size':self.batch_size})
-        eval_steps = 1000  # 1000 * batch_size
+        eval_steps = 300  # 1000 * batch_size
         eval_drop_remainder = False
         eval_input_fn = file_based_input_fn_builder(
             input_file=eval_file,
@@ -243,7 +287,8 @@ class SimpleBert(object):
                 'learning_rate':self.learning_rate,
                 'num_train_steps':self.num_train_steps,
                 'num_warmup_steps':self.num_warmup_steps,
-                'batch_size':self.batch_size
+                'batch_size':self.batch_size,
+                'fp16':self.fp16
             })
         train_input_fn = file_based_input_fn_builder(
             input_file=input_file,
@@ -257,33 +302,6 @@ class SimpleBert(object):
             seq_length=self.max_seq_length,
             is_training=False,
             drop_remainder=eval_drop_remainder)
-        seq_length = self.max_seq_length
-        '''
-        feature_spec = {
-            "input_ids": tf.FixedLenFeature([seq_length], tf.int64),
-            "input_mask": tf.FixedLenFeature([seq_length], tf.int64),
-            "segment_ids": tf.FixedLenFeature([seq_length], tf.int64),
-            "label_ids": tf.FixedLenFeature([], tf.int64)
-        }
-        def serving_input_receiver_fn():
-            """
-            This is used to define inputs to serve the model.
-            :return: ServingInputReciever
-            """
-            serialized_tf_example = tf.placeholder(dtype=tf.string, shape=[self.batch_size], name='input_example_tensor')
-            receiver_tensors = {'examples': serialized_tf_example}
-            features = tf.parse_example(serialized_tf_example, feature_spec)
-            return tf.estimator.export.ServingInputReceiver(features, receiver_tensors)
-        # Define evaluating spec.
-        latest_exporter = tf.estimator.LatestExporter(
-            name="models",
-            serving_input_receiver_fn=serving_input_receiver_fn,
-            exports_to_keep=5)
-        best_exporter = tf.estimator.BestExporter(
-            serving_input_receiver_fn=serving_input_receiver_fn,
-            exports_to_keep=1)
-        exporters = [latest_exporter, best_exporter]
-        '''
         train_spec = tf.estimator.TrainSpec(input_fn=train_input_fn, max_steps=self.num_train_steps)
         eval_spec = tf.estimator.EvalSpec(input_fn=eval_input_fn, steps=None)
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
@@ -331,8 +349,7 @@ class SimpleBert(object):
         estimator.export_savedmodel('./saved_models', serving_input_receiver_fn, strip_default_attrs=True)
 
     def gen_data(self, train_record, eval_record, test_record=None):
-        """
-            gen data and process
+        """gen data and process
         """
         tokenizer = tokenization.FullTokenizer(
             vocab_file=self.vocab_file, do_lower_case=True)
@@ -365,12 +382,5 @@ if __name__ == "__main__":
     simple_bert = SimpleBert()
     train_file = simple_bert.config.output_dir + '/train_512_ab.tf_record'
     eval_file = simple_bert.config.output_dir + '/eval_512_ab.tf_record'
-    #simple_bert.export_saved_model()
-    #simple_bert.train(train_file)
     #predict_file = simple_bert.config.output_dir + '/predict.tf_record'
     simple_bert.train_and_eval(train_file, eval_file)
-    #simple_bert.predict(predict_file)
-    #simple_bert.eval(eval_file)
-    #simple_bert.train(train_file)
-    #simple_bert.gen_data('sina/train_256_ab.tf_record', 'sina/eval_256_ab.tf_record')
-    #simple_bert.gen_data('sina/train_sina.record', 'sina/eval_sina.record')

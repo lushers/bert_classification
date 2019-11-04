@@ -1,0 +1,19 @@
+python run_custom_classifier.py \
+  --task_name=mine \
+  --do_lower_case=true \
+  --do_train=true \
+  --do_eval=true \
+  --do_predict=false \
+  --save_for_serving=true \
+  --data_dir=../data \
+  --vocab_file=../roberta_wwm/vocab.txt \
+  --bert_config_file=../roberta_wwm/bert_config.json \
+  --init_checkpoint=../roberta_wwm/bert_model.ckpt \
+  --max_seq_length=128 \
+  --train_batch_size=32 \
+  --learning_rate=2e-5 \
+  --num_train_epochs=3.0 \
+  --use_gpu=true \
+  --num_gpu_cores=2 \
+  --use_fp16=false \
+  --output_dir=../data/models

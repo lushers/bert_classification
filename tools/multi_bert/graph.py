@@ -1,17 +1,19 @@
 #!/usr/bin/env python
 #coding:utf-8
+import os
 import sys
 reload(sys)
 sys.setdefaultencoding('utf-8')
+_cur_dir = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(_cur_dir + '/bert_multi_gpu')
 import tempfile
-import os
 import json
+import contextlib
 
 import tensorflow as tf
 from tensorflow.python.tools.optimize_for_inference_lib import optimize_for_inference
-from bert import modeling
-import contextlib
-from simple_bert import SimpleBert
+from bert_multi_gpu import modeling
+from multi_bert import SimpleBert
 
 def convert_variables_to_constants(sess,
                                    input_graph_def,
@@ -110,13 +112,7 @@ def convert_variables_to_constants(sess,
 
 config = tf.ConfigProto(device_count={'GPU': 0}, allow_soft_placement=True)
 
-init_checkpoint = \
-'./model_bak/model.ckpt-300000'
-#'./model_sina_ab/model.ckpt-37342'
-#'/data8/qinchuan1/workspace/simple_bert/temp/model.ckpt-19000'
-#'/data8/qinchuan1/workspace/simple_bert/model_output_ab/model.ckpt-218900'
-#'/data8/qinchuan1/workspace/simple_bert/model_256_bak/model.ckpt-153500'
-#'/data2/sina_recmd/qinchuan1/workspace/simple_bert/model_output_512/model.ckpt-80800'
+init_checkpoint = './model_multi_512_roberta/model.ckpt-98826'
 
 input_ids = tf.placeholder(shape=[None, None], dtype=tf.int32, name='input_ids')
 input_mask = tf.placeholder(shape=[None, None], dtype=tf.int32, name='input_mask')
@@ -132,7 +128,9 @@ loss, per, logits, probabilities, predict_res = model.create_model(
         segment_ids=segment_ids,
         labels=labels,
         num_labels=model.num_labels,
-        use_one_hot_embeddings=False)
+        use_one_hot_embeddings=False,
+        fp16=False
+)
 
 tvars = tf.trainable_variables()
 (assignment_map, initialized_variable_names
@@ -157,5 +155,5 @@ with tf.Session(config=config) as sess:
     tmp_g = convert_variables_to_constants(sess, tmp_g, [n.name[:-2] for n in output_tensors])
 
     tmp_file = tempfile.NamedTemporaryFile('w', delete=False).name
-    with tf.gfile.GFile('model_ab_sina_512.pb', 'wb') as f:
+    with tf.gfile.GFile('model_multi_512_98826.pb', 'wb') as f:
         f.write(tmp_g.SerializeToString())

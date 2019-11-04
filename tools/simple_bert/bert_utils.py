@@ -67,8 +67,8 @@ class DataProcessor(object):
                 lis = line.strip().split('\t|@@@|\t')
                 if len(lis) != 3:
                     continue
-                lis[1] = lis[1].replace(u'\n', u'').lstrip(u'。').replace(u'。。', u'')
-                lis[2] = lis[2].replace(u'\n', u'').lstrip(u'。').replace(u'。。', u'')
+                lis[1] = lis[1].replace(u'\n', u'')
+                lis[2] = lis[2].replace(u'\n', u'')
                 lists.append(lis)
         return lists
 
@@ -79,12 +79,12 @@ class MineABProcessor(DataProcessor):
 
     def get_train_examples(self, data_dir):
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, 'train.shuf')), 'train')
+            self._read_tsv(os.path.join(data_dir, 'small.train.shuf')), 'train')  #train.shuf
 
     def get_dev_examples(self, data_dir):
         """Gets a collection of `InputExample`s for the dev set."""
         return self._create_examples(
-            self._read_tsv(os.path.join(data_dir, "dev.shuf")), 'dev')
+            self._read_tsv(os.path.join(data_dir, "small.dev.shuf")), 'dev')
 
     def get_test_examples(self, data_dir):
         """Gets a collection of `InputExample`s for prediction."""
@@ -110,9 +110,11 @@ class MineABProcessor(DataProcessor):
                 text_a = tokenization.convert_to_unicode(line[1])
                 text_b = tokenization.convert_to_unicode(line[2])
                 if set_type == "test":
-                    label = u"体育"   # default
+                    label = u"美食"   # default
                 else:
                     label = tokenization.convert_to_unicode(line[0])
+                    if label == u'影视':  # 过去一级分类不一致
+                        label = u'娱乐'
                     if label not in self.labels:
                         continue
             except Exception as ex:
@@ -293,7 +295,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
         d = tf.data.TFRecordDataset(input_file)
         if is_training:
             d = d.repeat()
-            d = d.shuffle(buffer_size=3700)
+            d = d.shuffle(buffer_size=370)  #3700
         d = d.apply(
                 tf.contrib.data.map_and_batch(
                     lambda record: _decode_record(record, name_to_features),
